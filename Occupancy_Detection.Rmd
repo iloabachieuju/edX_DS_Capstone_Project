@@ -1,0 +1,363 @@
+---
+title: "Occupancy Detection"
+author: "Uju Iloabachie"
+date: "`r format(Sys.time(), '%B %d %Y')`"
+output: pdf_document
+editor_options: 
+  chunk_output_type: inline
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1.  INTRODUCTION
+Occupancy information in buildings is useful to improve performance of energy management systems in order to enable energy consumption savings.
+This information about the occupancy in a room is also useful in ensuring good ventilation, security and maintaining occupants' comfort.
+Heating, cooling and ventilation of a buildings requires a great amount of energy. Some buildings still condition rooms and have lighting on
+with the notion of maximum occupancy rather than actuage usage. As a result, energy can be wasted, resulting to exorbitant electricity bills
+
+Occupany detection is used to detect the presence of a person in a room. It requires the use of electronic sensor to detect the motion of a 
+person entering a room so as  to automatically control lights, temperature or ventilation systems. These sensors use infrared, ultrasonic, 
+microwave, or other technology to perform their function. A room need not to be lit if no motion is detected because the space has no occupant. 
+In such circumstances, turning off lights can save some amount of energy and reduce the cost in electricity bills. 
+
+The aim of this capstone project is to build three machine learning algorithms using the train set, predict occupancy status and select the 
+model that performs best with the data set using overall accuracy measure. The implementation of machine learning algorithm will help in 
+energy conservation and reduced cost of electricity bills.
+
+The data set used for this analysis is the ground-truth occupancy detection data obtained from [UCI machine learning repository.](https://archive.ics.uci.edu/ml/datasets/Occupancy+Detection+#). 
+It is obtained from time-stamped pictures of environmental variables like temperature, relative humidity, light, CO2 taken every minute. 
+
+
+
+## 2.  METHOD AND ANALYSIS
+
+### 2.1  Data Preparation
+The occupancy detection data zip has 3 text files. One training set and two test sets. The data sets is downloaded, joined by rows using full_join and ordered by the date.
+
+```{r include=FALSE}
+
+#Install and load libraries
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(lubridate)) install.packages("lubridate", repos = "http://cran.us.r-project.org")
+
+library(tidyverse)
+library(caret)
+
+
+#Occupancy Detection Data sets
+#https://archive.ics.uci.edu/ml/datasets/Occupancy+Detection+#
+#https://archive.ics.uci.edu/ml/machine-learning-databases/00357/occupancy_data.zip
+
+
+#Create temp file
+temp = tempfile()
+
+#Download zip file from internet to temp file
+download.file("https://archive.ics.uci.edu/ml/machine-learning-databases/00357/occupancy_data.zip", temp)
+
+#Extract the the 3 text files out of zip 
+file_one <- unzip(temp, "datatest.txt")
+file_two <- unzip(temp, "datatest2.txt")
+file_three <- unzip(temp, "datatraining.txt")
+
+#Load the data sets in R from the objects above
+test_one <- read.csv(file_one)
+test_two <- read.csv(file_two)
+training <- read.csv(file_three)
+
+#Join the three data sets sort the data by date
+data <- full_join(training, test_one) %>% 
+        full_join(test_two) %>% arrange(date)
+
+rm(temp, file_one, file_two, file_three)
+
+```
+
+### 2.2  Data Exploration
+We will explore the data set so that we can understand its structure. 
+
+```{r}
+#Dimension of data
+dim(data)
+```
+
+There are 20560 rows and 7 columns
+
+```{r}
+#data structure
+str(data)
+``` 
+
+```{r}
+#unique values of occupancy status
+unique(data$Occupancy)
+```
+Occupancy status is a binary variable. 1 indicate that the room is occupied and 0 not occupied. So we'll convert the  variable from integer to a factor.
+
+```{r}
+#Convert Occupancy variable to factor data type
+data$Occupancy <- as.factor(data$Occupancy)
+```
+
+```{r}
+#first six rows of the data set
+head(data)
+```
+
+Let's see the summary statistics of each variable in the data set.a
+```{r}
+#summary statistics
+summary(data)
+```
+
+There are no missing values in the data set. In building our algorithms, we'll drop the date variable. Occupancy is our response variable. From our summary 
+statistics, the room is not occupied most of the time which is given by 15810 and when occupied is 4750. Also HumidityRatio has the least average as this 
+quantity is derived from the ratio of temperature and relative Humidity.
+
+```{r}
+#Percentage of occupancy
+data %>% group_by(Occupancy) %>% 
+            summarise(n = n()) %>% 
+              mutate(percent = (n*100)/sum(n))
+```
+
+We can see that 23.1% of the time, the room was occupied and 76.9% it was not occupied.
+
+Let's plot the distributions of the variables.
+```{r}
+
+#Distribution of Temperature
+p1 <- data %>% ggplot(aes(Temperature)) +
+      geom_histogram(bins = 30, fill = "royal blue", color = "black") +
+      ggtitle("Temperature")
+
+#Distribution of Humidity        
+p2 <- data %>% ggplot(aes(Humidity)) + 
+       geom_histogram(bins = 30, fill = "royal blue", color = "black") +   
+       ggtitle("Humidity")
+
+#Distribution of Light
+p3 <- data %>% ggplot(aes(Light)) + 
+      geom_histogram(bins = 30, fill = "royal blue", color = "black") +
+      ggtitle("Light")
+
+#Distribution of CO2
+p4 <- data %>% ggplot(aes(CO2)) + 
+      geom_histogram(bins = 30, fill = "royal blue", color = "black") +
+      ggtitle("CO2")
+
+#Distribution of HumidityRation  
+p5 <- data %>% ggplot(aes(HumidityRatio)) + 
+       geom_histogram(bins = 30, fill = "royal blue", color = "black") +
+       ggtitle("HumidityRatio")
+
+#Distribution of Occupancy Status
+p6 <- data %>% ggplot(aes(Occupancy)) + 
+      geom_bar(width = 0.5, fill = "royal blue", color = "black") + 
+      ggtitle("Occupancy Status")
+
+gridExtra::grid.arrange(p1, p2, p3, p4, p5, p6, nrow = 3, ncol = 2)
+```
+
+Light and CO2 variables have peak about 0 and 500 respectively with majority of the sample values clustered on the right side. Temperature, Humidity 
+and HumidityRatio have more spread though varying intervals on the x-axis.
+
+Let's check for multicollinearity .
+```{r}
+cor_mat <- data %>% select(Temperature, Humidity, Light, CO2, HumidityRatio) %>% cor()
+corrplot::corrplot(cor_mat, type = "lower", method = "number")
+```
+
+From the correlation plot, We can see that Temperature and Humidity are negatively correlated. Also light and Humidity are negatively correlated. 
+Humidity and HumidityRatio are highly correlated which is obvious as Humidity ratio is the ratio of temperature and relative humidity. Hence we consider
+Humidity and drop HumidityRatio in building our models.
+
+
+### 2.3  Modeling
+Our response variable is binary, we need classification types of models. Here we implement logistics regression, k-Nearest Neighbors and decision tree. 
+We will partition the data set into train and test set. 80% of the data set will be the train set and 20% is the test set. We'll be using the train set 
+to build our models and the test set will be used in evaluating our models and the model performance will be determined by the overall accuracy.
+
+```{r warning=FALSE}
+data1 <- data %>% select(Temperature, Humidity, Light, CO2, Occupancy)
+set.seed(1, sample.kind = "Rounding")
+test_index <- createDataPartition(data1$Occupancy, times = 1, p = 0.2, list = FALSE)
+train_set <- data1[-test_index,]
+test_set <- data1[test_index,]
+```
+
+### 2.3.1  Logistic Regression
+Logistic regression is one of the most popular machine learning algorithms. It is an extension of linear regression that assures that the estimate of
+conditional probability $Pr(Y=1|X=x)$ is between 0 and 1. This approach makes use of the logistic transformation given by
+$$
+g(p)=log\frac{p}{1-p}
+$$ 
+
+The logistic transformation converts probabilities given by 
+
+$$
+\text{Odds} = \frac{p}{1-p}
+$$ 
+to log odds. The odds tells us how much more likely something will happen compared to not happen.
+In our case, the odds is the ratio of probability that the room is occupied to the probability that the room is not occupied. 
+
+With logistic regression, we model the conditional probability of the occupancy detection data as:
+$$
+g\{p(x_1,x_2,x_3,x_4)\} = g\{Pr(Y=1|X_1=x_1, X_2=x_2, X_3=x_3, X_4=x_4)\} = \beta_0+\beta_1x_1+\beta_2x_2+\beta_3x_3+\beta_4x_4
+$$
+$Pr(Y=1|X_1=x_1, X_2=x_2, X_3=x_3, X_4=x_4)$ is the conditional probability that the room is occupied given $X_1$, $X_2$, $X_3$, $X_4$.\
+$X_1$ is Temperature,\
+$X_2$ is Humidity,\
+$X_3$ is Light,\
+$X_4$ is $CO_2$\
+
+$g\{p(x_1,x_2,x_3,x_4)\}$ is the logistic function. So our model is given as:
+
+$$
+log\frac{p}{1-p} = \beta_0+\beta_1x_1+\beta_2x_2+\beta_3x_3+\beta_4x_4
+$$
+We compute the maximum likelihood estimates(MLE). In R, we can fit the logistic regression model with the function generalized linear models, (glm).
+
+```{r warning=FALSE}
+#fit a logistic model on the train set
+glm_fit <- glm(Occupancy ~ ., data = train_set, family = binomial)
+summary(glm_fit)
+
+```
+
+We can see from the model summary that the coefficients are significant using the the p-values. This means that Temperature, Humidity, Light and Co2 
+contribute to whether the room is occupied or not occupied
+
+ 
+```{r}
+#Prediction using the test set
+p_hat <- predict(glm_fit, newdata = test_set, type = "response")
+y_hat <- factor(ifelse(p_hat > 0.5, 1, 0))
+
+#Confusion matrix
+accuracy_glm <- confusionMatrix(data = y_hat, reference = test_set$Occupancy)$overall["Accuracy"]
+accuracy_glm
+```
+The logistic model performed well with an accuracy of 99% 
+
+###  2.3.2  K-Nearest Neigbors(KNN)
+KNN is one of the most commonly used supervised learning techniques used to solve classification problems. The main concept for KNN is based on 
+computing the distances between the train and test data samples using a distance function to identify their nearest neighbors. We first defined 
+the distance between observations based on the features. Basically, for any point for which you want to estimate the conditional probability, we 
+look at the k-nearest points and then take the average of these points. We refer to the set of points used to compute the average as a neighborhood.
+To select the K that’s right for your data, we run the KNN algorithm several times with different values of k and choose the k that reduces the number 
+of errors we encounter while maintaining the algorithm’s ability to accurately make predictions when it’s given data it hasn’t seen before.
+Larger values of k result in smoother estimates, while smaller values of k result in more flexible and more wiggly estimates. To implement the 
+algorithm, we can use the knn3() function from the caret package. 
+
+
+```{r}
+#Using cross validation to select k that maximizes the accuracy
+
+#Define a set of ks
+ks <- seq(3, 251, 2)
+
+#Compute accuracies for values of ks
+accuracy <- sapply(ks, function(k){
+            
+   knn_fit <- knn3(Occupancy ~ ., data = train_set, k = k)
+   
+   y_hat_knn <- predict(knn_fit, newdata = test_set, type = "class")
+  
+    cm_test <- confusionMatrix(data = y_hat_knn, reference = test_set$Occupancy)
+            
+    test_accuracy <- cm_test$overall["Accuracy"]
+            
+    return(test_accuracy)
+})
+
+```
+
+```{r}
+#maximum accuracy
+accuracy_knn <- max(accuracy)
+
+#ks value for which accuracy is maximum
+ks[which.max(accuracy)]
+
+accuracy_knn
+```
+The k value for which our accuracy is maximum is 11. The KNN algorithm performs much better than the logistics regression with accuracy of 99.1%.
+
+### 2.3.3  Decision Trees
+Decision Trees are used in prediction problems where the outcome is categorical. The general idea is to define an algorithm that uses data to create trees with predictions 
+at the ends referred to as nodes. Decision trees operate by predicting an outcome variable $Y$ by partitioning the predictors. We form predictions by calculating which class 
+is the most common among the train set observations within the partition, rather than taking the average in each partition. Two of the more popular metrics to choose the 
+partitions are the Gini index and Entropy. For more explanation on decision trees is available 
+[here.](https://rafalab.github.io/dsbook/examples-of-algorithms.html#cart-motivation)
+The Gini index is defined as
+
+$$
+\text Gini(j) = \sum_{k=1}^k{\hat{p}_{j,k}(1-\hat{p}_{j,k})}
+$$
+And the entropy is defined as
+$$
+\text entropy(j) = -\sum^k_{k=1}\hat{p}_{j,k}log(\hat{p}_{j,k}), 
+$$
+with  0$\times$log(0) defined as 0
+
+
+
+
+```{r warning=FALSE}
+#Using cross validation to select complexity parameter that maximizes the accuracy
+#Fit decision tree using train set
+train_rpart <- train(Occupancy ~ .,
+                     method = "rpart",
+                     tuneGrid = data.frame(cp = seq(0.0, 0.1, len = 30)),
+                     data = train_set)
+```
+
+
+```{r}
+#Prediction using the test_set
+y_hat_rpart <- predict(train_rpart, test_set)
+
+#Compute the accuracy
+accuracy_rpart <- confusionMatrix(y_hat_rpart, test_set$Occupancy)$overall["Accuracy"]
+accuracy_rpart
+```
+Among the three models, the decision tree performed best with an accuracy of 99.2%.
+
+## 3.  RESULT
+
+Here are the result of the models:
+```{r}
+accuracy_results <- tibble(Methods = c("logistics regression",
+                                       "KNN",
+                                       "Decision Trees"),
+                          Accuracy = c(accuracy_glm,
+                                        accuracy_knn,
+                                        accuracy_rpart))
+accuracy_results
+```
+
+The three models performs really well but Decision trees out performs all the models, followed by the knn and lastly logistics regression.
+
+
+## 4.  CONCLUSION
+
+In summary, we were able to download the occupancy data set from  [UCI machine learning repository.](https://archive.ics.uci.edu/ml/datasets/Occupancy+Detection+#). 
+Also, we prepared and explored the data set .The logistics regression, K-Nearest Neighbors and Decision trees three were used to model the data set and to make predictions 
+using environmental variables Temperature, Humidity, Light and $CO_2$. From our accuracy measures, we can see that the decision tree out performs the other models with an 
+accuracy of approximately 99.2% using the test set. The data set may be interesting for further analysis using a multivariate time series classification approach.
+
+### REFERENCES
+1.  Irizarry, Rafael A., [“Introduction to Data Science: Data Analysis and Prediction Algorithms with R”.](https://rafalab.github.io/dsbook/)
+
+2. [UCI machine learning repository.](https://archive.ics.uci.edu/ml/datasets/Occupancy+Detection+#)
+
+3. Luis M. Candanedo, Véronique Feldheim.,University of Mons, Belgium.,["Accurate occupancy detection of an office room from light,temperature, humidity and CO2 measurements using statistical learning models."](https://www.researchgate.net/profile/Luis_Candanedo_Ibarra/publication/285627413_Accurate_occupancy_detection_of_an_office_room_from_light_temperature_humidity_and_CO2_measurements_using_statistical_learning_models/links/5b1d843ea6fdcca67b690c28/Accurate-occupancy-detection-of-an-office-room-from-light-temperature-humidity-and-CO2-measurements-using-statistical-learning-models.pdf?origin=publication_detail)
+
+4. Sara Ranjit., ["Occupancy Detection using Machine Learning."](http://nebula.wsimg.com/67c3746ccf0731bc46020a897b0e950a?AccessKeyId=DFB1BA3CED7E7997D5B1&disposition=0&alloworigin=1)
+
+
